@@ -1,0 +1,281 @@
+/*=================================================================
+ * Bank Queue (Poisson) Simulator
+ * C Project - Full Implementation
+ * Requirements: Poisson, Linked List Queue, Dynamic Memory, Stats
+ ===================================================================*/
+
+#include <stdio.h>                // Standard I/O
+#include <stdlib.h>               // Standard Library(malloc, rand, qsort)
+#include <math.h>                 // Math functions
+#include <time.h>                // Time for seeding random (srand)
+
+// ------------------------
+// Customer Node for Queue
+// ------------------------
+
+// Customer structure
+typedef struct Customer {              //typedef for easier usage (Customer instead of struct Customer)
+    int arrival_time;                  // Minute customer arrived
+    struct Customer *next;             // Pointer to next customer
+} Customer;
+
+// ----------------------------------
+// Function Prototypes (Declarations)
+// ----------------------------------
+int poisson_random(double lambda);                                       // Poisson random number generator
+
+void enqueue(Customer **front, Customer **rear, int arrival_time);       // Enqueue new customer
+
+Customer* dequeue(Customer **front, Customer **rear);                    // Returns pointer to dequeued customer
+
+int is_empty(Customer *front);                                           // Check if queue is empty
+
+void add_wait_time(int **wait_times, int *count, int *capacity, int wait);// Add wait time to dynamic array
+
+void analyse_wait_times(int *wait_times, int count);                      // Statistical analysis & report
+
+static int cmp_int(const void *a, const void *b);                         // Comparison function for qsort,here qsort used to find median 
+
+
+
+
+// -----------------------------
+// Poisson Random Number (Knuth) 
+// -----------------------------
+
+
+/*
+formula explanation:
+1. L = exp(-λ): This calculates the value of L, which is the exponential of the negative lambda (λ). This value represents the probability 
+of zero events occurring in the Poisson distribution.
+2. p = 1.0: This initializes the variable p to 1.0. This variable will be used to accumulate the product of random probabilities.
+3. k = 0: This initializes the variable k to 0. This variable will be used to count the number of events.
+4. The do-while loop generates random numbers and updates p and k until p becomes less than or equal to L:
+   - k++: Increment the event count k by 1.
+   - p *= (rand() / (double)RAND_MAX): Generate a random number between 0 and 1 using rand() and multiply it with p. 
+   
+   This simulates the probability of 
+   observing k events.
+5. return k - 1: Once the loop exits, the function returns k - 1,
+ which represents the number of events that occurred according to the Poisson distribution.
+*/
+
+
+
+int poisson_random(double lambda) {                                    
+    double L = exp(-lambda);
+    double p = 1.0;
+    int k = 0;
+
+    do {
+        k++;
+        p *= (rand() / (double)RAND_MAX);                   
+    } while (p > L);
+
+    return k - 1;
+}
+
+// --------------------------
+// Queue Operations
+// --------------------------
+void enqueue(Customer **front, Customer **rear, int arrival_time) {
+    Customer *new_cust = (Customer *)malloc(sizeof(Customer));                  // Allocate memory for new customer
+    if (!new_cust) {
+        perror("malloc");
+        exit(1);
+    }
+    new_cust->arrival_time = arrival_time;
+    new_cust->next = NULL;
+
+    if (*rear == NULL) {
+        *front = *rear = new_cust;
+    } else {
+        (*rear)->next = new_cust;
+        *rear = new_cust;
+    }
+}
+
+Customer* dequeue(Customer **front, Customer **rear) {
+    if (*front == NULL) return NULL;
+
+    Customer *temp = *front;
+    *front = (*front)->next;
+    if (*front == NULL) *rear = NULL;                       // If queue is empty after dequeue, set rear to NULL
+    return temp;
+}
+
+int is_empty(Customer *front) {                           // Check if queue is empty
+    return front == NULL;
+}
+
+// --------------------------
+// Dynamic Wait Time Array
+// --------------------------
+void add_wait_time(int **wait_times, int *count, int *capacity, int wait) {
+    if (*count == *capacity) {                              // Resize array if needed
+        *capacity *= 2;
+        *wait_times = (int *)realloc(*wait_times, *capacity * sizeof(int));         // Reallocate memory
+        if (!*wait_times) {
+            perror("realloc");                                                      // Check realloc success
+            exit(1);
+        }
+    }
+    (*wait_times)[(*count)++] = wait;
+}
+
+// --------------------------
+// Statistical Analysis & Report
+// --------------------------
+static int cmp_int(const void *a, const void *b) {           // Comparison function for qsort,qsort used to sort wait times for median calculation
+    return (*(int *)a - *(int *)b);
+}
+
+void analyse_wait_times(int *wait_times, int count) {
+    if (count == 0) {
+        printf("\n=== SIMULATION REPORT ===\n");
+        printf("No customers were served during the 8-hour day.\n");
+        return;
+    }
+
+    // 1. Maximum
+    int max_wait = wait_times[0];
+    for (int i = 1; i < count; i++)
+        if (wait_times[i] > max_wait) max_wait = wait_times[i];
+
+    // 2. Mean
+    double sum = 0.0;
+    for (int i = 0; i < count; i++) sum += wait_times[i];
+    double mean = sum / count;
+
+    // 3. Standard Deviation
+    double variance = 0.0;
+    for (int i = 0; i < count; i++) {
+        double diff = wait_times[i] - mean;
+        variance += diff * diff;
+    }
+    variance /= count;
+    double std_dev = sqrt(variance);
+
+    // 4. Median
+    int *sorted = (int *)malloc(count * sizeof(int));                            // Copy and sort wait times
+    if (!sorted) { perror("malloc"); exit(1); }                                  
+    for (int i = 0; i < count; i++) sorted[i] = wait_times[i];
+    qsort(sorted, count, sizeof(int), cmp_int);                                  // Sort the array
+
+    double median;                                                               // Calculate median
+    if (count % 2 == 0) {
+        int m1 = sorted[count/2 - 1];
+        int m2 = sorted[count/2];
+        median = (m1 + m2) / 2.0;
+    } else {
+        median = sorted[count/2];
+    }
+
+    // 5. Mode
+    int *freq = (int *)calloc(max_wait + 1, sizeof(int));                   // Frequency array
+    if (!freq) { perror("calloc"); exit(1); }
+
+    for (int i = 0; i < count; i++) freq[wait_times[i]]++;
+
+    int mode = 0, max_freq = 0;
+    for (int w = 0; w <= max_wait; w++) {
+        if (freq[w] > max_freq) {
+            max_freq = freq[w];
+            mode = w;
+        }
+    }
+
+    // ----------------------
+    // Final Report
+    // ----------------------
+    printf("\n=== SIMULATION REPORT (8-hour day) ===\n");
+    printf("Customers served          : %d\n", count);                                           // Total customers served
+    printf("Mean wait time            : %.2f minutes\n", mean);                                  // Mean wait time                
+    printf("Median wait time          : %.2f minutes\n", median);                                // Median wait time
+    printf("Mode wait time            : %d minute%s\n", mode, (mode == 1 ? "" : "s"));           // Mode wait time
+    printf("Standard deviation        : %.2f minutes\n", std_dev);                               // Standard deviation
+    printf("Longest single wait time  : %d minutes\n", max_wait);                                // Maximum wait time
+    printf("=====================================\n");
+
+    free(sorted);
+    free(freq);
+}
+
+
+
+// --------------------------
+// Main
+// --------------------------
+int main(void) {                      //here,void means no command line arguments
+    srand(time(NULL));                // Seed random number generator
+
+    double lambda;
+    printf("Enter average customers per minute (lambda): ");           // Input lambda
+    if (scanf("%lf", &lambda) != 1 || lambda < 0) {                    // Validate input
+        printf("Invalid input. Exiting.\n"); 
+        return 1;
+    }
+
+    // Queue pointers
+    Customer *front = NULL, *rear = NULL;                               // Initialize empty queue
+
+    // Wait times storage
+    int *wait_times = NULL;                                             // Dynamic array for wait times
+    int count = 0, capacity = 16;
+    wait_times = (int *)malloc(capacity * sizeof(int));                 // Initial allocation
+    if (!wait_times) {                                                  // Check malloc success,here, !wait_times means if wait_times is NULL
+        perror("malloc");                                               // Print error message ; perror is standard library function to print error related to system calls
+        return 1;
+    }
+
+    // Teller state
+    int remaining_service = 0;
+
+    // ----------------------
+    // Simulation: 480 minutes
+    // ----------------------
+
+    for (int minute = 0; minute < 480; minute++) {                            // Simulate each minute in an 8-hour day (480 minutes)
+  
+        // 1. Customer Arrivals (Poisson)
+        int arrivals = poisson_random(lambda);                                // calls the function for random generator and basically gives mean number of arrivals per minute
+       
+        for (int i = 0; i < arrivals; i++) {
+            enqueue(&front, &rear, minute);                                   // Enqueue new customer with current minute as arrival time
+        }
+
+        // 2. Teller Service
+        if (remaining_service > 0) {                                         // If teller is busy, decrement remaining service time
+            remaining_service--;
+        }
+
+        if (remaining_service == 0 && !is_empty(front)) {
+            Customer *cust = dequeue(&front, &rear);                         // Dequeue next customer
+            int wait = minute - cust->arrival_time;                          // Calculate wait time
+            add_wait_time(&wait_times, &count, &capacity, wait);             // Record wait time
+
+       
+            // Start new service: 2 or 3 minutes
+            remaining_service = 2 + (rand() % 2);  // 2 or 3                    
+            free(cust);
+        }
+    }
+
+    // ----------------------
+    // Final Report
+    // ----------------------
+    analyse_wait_times(wait_times, count);
+
+    // ----------------------
+    // Cleanup
+    // ----------------------
+    free(wait_times);
+
+    // Free any customers still in queue (not served)
+    while (!is_empty(front)) {
+        Customer *cust = dequeue(&front, &rear);
+        free(cust);
+    }
+
+    return 0;
+}
